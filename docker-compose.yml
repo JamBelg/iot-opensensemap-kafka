@@ -1,0 +1,153 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: iot_postgres
+    restart: always
+    environment:
+      POSTGRES_USER: "postgres"
+      POSTGRES_PASSWORD: "postgres"
+      POSTGRES_DB: "iot_db"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./db_init:/docker-entrypoint-initdb.d
+    networks:
+      - iot_network
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.4.0
+    hostname: zookeeper
+    container_name: zookeeper
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    volumes:
+      - zookeeper-data:/var/lib/zookeeper/data
+      - zookeeper-logs:/var/lib/zookeeper/log
+    networks:
+      - iot_network
+
+  kafka:
+    image: confluentinc/cp-kafka:7.4.0
+    hostname: kafka
+    container_name: kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+      - "9101:9101"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,PLAINTEXT_HOST://0.0.0.0:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_JMX_PORT: 9101
+      KAFKA_JMX_HOSTNAME: localhost
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    networks:
+      - iot_network
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    depends_on:
+      - kafka
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
+    restart: unless-stopped
+    networks:
+      - iot_network
+
+  initial_ingestor:
+    build: ./initial_fetch
+    container_name: initial_ingestor
+    restart: on-failure
+    depends_on:
+      - kafka
+      - postgres
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=iot_db
+      - BOX_ID=64102e3444c9f9000783c3a2
+      - SENSOR_ID=64102e3444c9f9000783c3a5
+      - PYTHONUNBUFFERED=1
+    networks:
+      - iot_network
+    volumes:
+      - /tmp:/tmp
+
+  producer:
+    build: ./produce_events
+    container_name: kafka_producer
+    restart: always
+    depends_on:
+      - kafka
+      - postgres
+      - initial_ingestor
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=iot_db
+      - BOX_ID=64102e3444c9f9000783c3a2
+      - SENSOR_ID=64102e3444c9f9000783c3a5
+      - PYTHONUNBUFFERED=1
+    networks:
+      - iot_network
+    volumes:
+      - /tmp:/tmp
+
+  
+  consumer:
+    build: ./consume_events
+    container_name: kafka_consumer
+    restart: always
+    depends_on:
+      - kafka
+      - postgres
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+      - PG_DSN=postgresql://postgres:postgres@postgres:5432/iot_db
+      - PYTHONUNBUFFERED=1
+    networks:
+      - iot_network
+
+  app:
+    build: ./node-app
+    container_name: iot_app
+    ports:
+      - "3000:3000"
+    restart: always
+    networks:
+      - iot_network
+
+volumes:
+  postgres_data:
+  zookeeper-data:
+  zookeeper-logs:
+  kafka-data:
+
+networks:
+  iot_network:
+    external: true

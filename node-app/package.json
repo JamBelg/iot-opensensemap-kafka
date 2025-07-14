@@ -1,0 +1,10 @@
+{
+  "name": "iot-node-app",
+  "version": "1.0.0",
+  "main": "index.js",
+  "type": "module",
+  "dependencies": {
+    "express": "^4.21.2",
+    "pg": "^8.16.3"
+  }
+}
