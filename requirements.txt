@@ -1,0 +1,8 @@
+requests
+pandas
+kafka-python
+psycopg2-binary
+asyncpg
+aiokafka
+typing
+logging
